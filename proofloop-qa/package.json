@@ -1,0 +1,28 @@
+{
+  "name": "proofloop-qa",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "worker": "npm run dev -w @proofloop/worker",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "db:generate": "prisma generate --schema=packages/prisma/schema.prisma",
+    "db:push": "prisma db push --schema=packages/prisma/schema.prisma",
+    "db:studio": "prisma studio --schema=packages/prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "eslint": "^9.25.0",
+    "prisma": "^6.19.0",
+    "prettier": "^3.2.0",
+    "typescript": "^5.4.0"
+  }
+}

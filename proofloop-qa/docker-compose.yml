@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: proofloop-postgres
+    environment:
+      POSTGRES_USER: proofloop_admin
+      POSTGRES_PASSWORD: proofloop_password
+      POSTGRES_DB: proofloop_qa
+    ports:
+      - "5433:5432" # host 5433: native Postgres already on 5432
+    volumes:
+      - proofloop_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U proofloop_admin -d proofloop_qa"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: proofloop-redis
+    ports:
+      - "6380:6379" # host 6380: another Redis already on 6379
+    volumes:
+      - proofloop_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  proofloop_db_data:
+  proofloop_redis_data:

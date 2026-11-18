@@ -1,0 +1,513 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  QA_LEAD
+  QA_ENGINEER
+  VIEWER
+}
+
+model Organization {
+  id        String    @id @default(uuid())
+  name      String
+  users     User[]
+  projects  Project[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model User {
+  id             String       @id @default(uuid())
+  email          String       @unique
+  passwordHash   String
+  firstName      String
+  lastName       String
+  role           Role         @default(VIEWER)
+  // Soft delete (deactivation): the row stays so historical defects/assignments keep their
+  // user (Defect.reporter is Restrict, DEF-02). Deactivated users cannot log in or use tokens.
+  deletedAt      DateTime?
+  // Password Reset Support
+  resetToken        String?   @unique
+  resetTokenExpiry  DateTime?
+  // Tokens issued before this moment are rejected (SEC-14: a password reset ends old sessions).
+  passwordChangedAt DateTime?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  reportedDefects Defect[]   @relation("ReportedDefects")
+  assignedDefects Defect[]   @relation("AssignedDefects")
+  testExecutions  TestExecution[]
+  auditLogs       AuditLog[]
+
+  @@index([organizationId])
+}
+
+model Project {
+  id                 String               @id @default(uuid())
+  name               String
+  description        String?
+  organizationId     String
+  organization       Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  environments       ProjectEnvironment[]
+  modules            Module[]
+  requirements       Requirement[]
+  testCases          TestCase[]
+  defects            Defect[]
+  automationProjects AutomationProject[]
+  apiCollections     ApiCollection[]
+  integrations       Integration[]
+  testCycles         TestCycle[]
+  qualityGateConfig  QualityGateConfig?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  @@index([organizationId])
+}
+
+model ProjectEnvironment {
+  id                 String   @id @default(uuid())
+  name               String // e.g., STAGING, PRODUCTION, UAT
+  baseUrl            String?
+  dbConnectionString String?  // Database Sentinel target database
+  projectId          String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  executions    AutomationExecution[]
+  apiExecutions ApiExecution[]
+  variables     EnvironmentVariable[]
+  testCycles    TestCycle[]
+
+  @@unique([projectId, name])
+}
+
+// Variables for {{KEY}} substitution in API requests (API-23). Secret values are never
+// returned by the API; the execution engine reads them server-side.
+model EnvironmentVariable {
+  id       String  @id @default(uuid())
+  key      String // e.g. API_TOKEN
+  value    String // NOTE: stored in plain text (no encryption at rest yet, see ISSUE-LOG)
+  isSecret Boolean @default(false)
+
+  environmentId String
+  environment   ProjectEnvironment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([environmentId, key])
+}
+
+model Module {
+  id           String        @id @default(uuid())
+  name         String
+  description  String?
+  projectId    String
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requirements Requirement[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([projectId, name])
+}
+
+model Requirement {
+  id                  String               @id @default(uuid())
+  reqId               String // e.g., REQ-001
+  title               String
+  description         String
+  priority            String // HIGH, MEDIUM, LOW
+  businessCriticality String // CRITICAL, HIGH, MODERATE, LOW
+  moduleId            String
+  module              Module               @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  projectId           String
+  project             Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  acceptanceCriteria  AcceptanceCriteria[]
+  risks               Risk[]
+  testCases           TestCase[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@unique([projectId, reqId])
+  @@index([moduleId])
+}
+
+model AcceptanceCriteria {
+  id            String      @id @default(uuid())
+  description   String
+  requirementId String
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+
+  @@index([requirementId])
+}
+
+model Risk {
+  id            String      @id @default(uuid())
+  title         String
+  description   String
+  probability   Int // 1-5
+  impact        Int // 1-5
+  riskScore     Int // probability * impact
+  level         String // CRITICAL, HIGH, MEDIUM, LOW
+  mitigation    String?
+  // A risk exists only because of its requirement: required + cascade (no orphans).
+  requirementId String
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([requirementId])
+}
+
+model TestCase {
+  id               String       @id @default(uuid())
+  tcId             String // e.g., TC-001
+  title            String
+  description      String?
+  preconditions    String?
+  testData         String?
+  priority         String
+  testType         String // UI, API, DATABASE, REGRESSION
+  automationStatus String // MANUAL, AUTOMATED, IN_PROGRESS
+  projectId        String
+  project          Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requirementId    String?
+  requirement      Requirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  steps            TestStep[]
+  defects          Defect[]
+  testExecutions   TestExecution[]
+  generatedScripts GeneratedScript[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([projectId, tcId])
+  @@index([requirementId])
+}
+
+model TestStep {
+  id             String   @id @default(uuid())
+  stepNumber     Int
+  action         String
+  expectedResult String
+  testCaseId     String
+  testCase       TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+
+  @@unique([testCaseId, stepNumber])
+}
+
+// ---------- Module 10: Defect Intelligence ----------
+// Migrated 2026-11-11 from the Phase 1 model (defId -> bugId kept via SQL rename; existing rows'
+// reporter = admin@proofloop.qa; expectedResult/actualResult dropped, folded into description).
+model Defect {
+  id               String  @id @default(uuid())
+  bugId            String // e.g., BUG-001
+  title            String
+  description      String
+  stepsToReproduce String?
+  severity         String // CRITICAL, HIGH, MEDIUM, LOW
+  status           String // OPEN, IN_PROGRESS, IN_REVIEW, CLOSED
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Traceability to the originating test case (optional: some bugs are found ad hoc)
+  testCaseId String?
+  testCase   TestCase? @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+
+  // Module 12: Jira 2-Way Sync
+  jiraTicketId String?
+
+  // Phase D: Link defect created from a test execution
+  testExecutionId String?
+  testExecution   TestExecution? @relation(fields: [testExecutionId], references: [id], onDelete: SetNull)
+
+  // Restrict (spec): a reporter with defects cannot be deleted. Consequence (ISSUE-LOG DEF-02):
+  // deleting an ORGANIZATION also fails while it has defects, because Postgres checks this
+  // constraint during the user cascade before the project -> defect cascade has run
+  // (NoAction behaves the same; verified 2026-11-11). Delete the org's defects first.
+  reporterId String
+  reporter   User   @relation("ReportedDefects", fields: [reporterId], references: [id], onDelete: Restrict)
+
+  assigneeId String?
+  assignee   User?   @relation("AssignedDefects", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  // Module: Root Cause Analyzer
+  rootCauseHypothesis String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, bugId])
+  @@index([projectId, createdAt]) // paged list, newest first (PERF-03)
+  @@index([status])
+  @@index([testCaseId])
+  @@index([assigneeId])
+  @@index([reporterId])
+  @@index([jiraTicketId])
+  @@index([testExecutionId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  action     String
+  entityId   String
+  entityType String
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+}
+
+// ---------- Module 5: Automation Lab ----------
+
+model AutomationProject {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+  framework   String  @default("PLAYWRIGHT")
+  repository  String?
+  branch      String?
+  projectId   String
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  executions AutomationExecution[]
+  scripts    GeneratedScript[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, name])
+}
+
+// Playwright spec generated from a test case (LLM or template fallback). One per
+// (automation project, test case); regenerating replaces the code and resets it to DRAFT.
+// Only APPROVED scripts are executed by apps/worker.
+model GeneratedScript {
+  id       String @id @default(uuid())
+  fileName String // e.g. tc-001-login-succeeds.spec.ts (validated: no path separators)
+  code     String
+  status   String @default("DRAFT") // DRAFT, APPROVED
+  source   String // AI, TEMPLATE
+  model    String? // LLM model id when source = AI
+
+  testCaseId String
+  testCase   TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+
+  automationProjectId String
+  automationProject   AutomationProject @relation(fields: [automationProjectId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([automationProjectId, testCaseId])
+  @@unique([automationProjectId, fileName])
+  @@index([testCaseId])
+}
+
+model AutomationExecution {
+  id      String @id @default(uuid())
+  runId   String // e.g., RUN-001 (server-assigned, sequential per automation project)
+  status  String // PENDING, RUNNING, PASSED, FAILED, CANCELLED
+  trigger String // MANUAL, SCHEDULED, CI_CD
+
+  // Must belong to the same Project as the automation project (enforced in controller).
+  environmentId      String?
+  projectEnvironment ProjectEnvironment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+
+  automationProjectId String
+  automationProject   AutomationProject @relation(fields: [automationProjectId], references: [id], onDelete: Cascade)
+
+  startTime    DateTime?
+  endTime      DateTime?
+  passedCount  Int       @default(0)
+  failedCount  Int       @default(0)
+  skippedCount Int       @default(0)
+  logUrl       String?
+  logs         String? // tail of the sandbox console output (capped by the worker)
+  results      Json? // [{ title, file, status, durationMs, error? }] from the Playwright JSON reporter
+
+  // Module: Root Cause Analyzer & Evidence Explorer
+  rootCauseHypothesis String?
+  artifacts           Json? // [{ name: string, type: 'screenshot'|'video'|'har', path: string, url: string }]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([automationProjectId, runId])
+  @@index([environmentId])
+}
+
+// ---------- Module 6: API Intelligence ----------
+
+model ApiCollection {
+  id          String       @id @default(uuid())
+  name        String
+  description String?
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requests    ApiRequest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, name])
+}
+
+model ApiRequest {
+  id             String  @id @default(uuid())
+  name           String
+  method         String // GET, POST, PUT, PATCH, DELETE
+  endpoint       String
+  headers        Json?
+  queryParams    Json?
+  body           Json? // NULL = no body
+  auth           Json?
+  assertions     Json? // validation rules (status, schema, logic)
+  sequenceNumber Int     @default(1) // server-assigned, 1..n per collection
+
+  collectionId String
+  collection   ApiCollection  @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  executions   ApiExecution[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Concurrent creates would otherwise get the same position silently (count+1 race, cf. DATA-09).
+  @@unique([collectionId, sequenceNumber])
+}
+
+model ApiExecution {
+  id           String  @id @default(uuid())
+  status       String // PASSED, FAILED
+  responseTime Int // milliseconds
+  statusCode   Int
+  responseBody Json?
+  errorMessage String?
+
+  requestId String
+  request   ApiRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  // Environment whose baseUrl replaced {{baseUrl}} (must belong to the request's project).
+  environmentId String?
+  environment   ProjectEnvironment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([requestId])
+  @@index([environmentId])
+}
+
+// ---------- Module 12: Integrations Engine ----------
+
+enum IntegrationType {
+  JIRA
+  SLACK
+}
+
+model Integration {
+  id        String          @id @default(uuid())
+  type      IntegrationType
+  name      String?
+  enabled   Boolean         @default(true)
+
+  // Slack config
+  webhookUrl String?
+  channel    String?
+
+  // Jira config
+  jiraHost       String?
+  jiraEmail      String?
+  jiraApiToken   String?
+  jiraProjectKey String?
+  jiraIssueType  String? @default("Bug")
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, type])
+  @@index([projectId])
+}
+
+// ---------- Phase D: Test Runs & Execution Cycles ----------
+
+model TestCycle {
+  id          String   @id @default(uuid())
+  cycleId     String   // e.g., CYC-001
+  name        String
+  description String?
+  status      String   @default("PLANNED") // PLANNED, IN_PROGRESS, COMPLETED, ABORTED
+
+  environmentId String?
+  environment   ProjectEnvironment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  executions TestExecution[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, cycleId])
+  @@index([projectId])
+  @@index([environmentId])
+}
+
+model TestExecution {
+  id     String @id @default(uuid())
+  status String @default("PENDING") // PENDING, PASSED, FAILED, SKIPPED, BLOCKED
+  notes  String?
+
+  testCycleId String
+  testCycle   TestCycle @relation(fields: [testCycleId], references: [id], onDelete: Cascade)
+
+  testCaseId String
+  testCase   TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+
+  executedById String?
+  executedBy   User?   @relation(fields: [executedById], references: [id], onDelete: SetNull)
+
+  executedAt DateTime?
+  defects    Defect[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([testCycleId, testCaseId])
+  @@index([testCycleId])
+  @@index([testCaseId])
+  @@index([executedById])
+}
+
+// ---------- Module: Release Quality Gate ----------
+
+model QualityGateConfig {
+  id                          String   @id @default(uuid())
+  projectId                   String   @unique
+  project                     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requireFullCoverage         Boolean  @default(false)
+  requireCriticalRiskCoverage Boolean  @default(true)
+  maxActiveCriticalDefects    Int      @default(0)
+  maxActiveHighDefects        Int      @default(2)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  @@index([projectId])
+}
