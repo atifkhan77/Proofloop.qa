@@ -48,6 +48,9 @@ model User {
   testExecutions  TestExecution[]
   auditLogs       AuditLog[]
 
+  requestedPentestScans PentestScan[]
+  updatedWstgItems      WstgChecklistItem[]
+
   @@index([organizationId])
   @@index([organizationId, deletedAt])
 }
@@ -68,6 +71,9 @@ model Project {
   integrations       Integration[]
   testCycles         TestCycle[]
   qualityGateConfig  QualityGateConfig?
+  verifiedDomains    VerifiedDomain[]
+  pentestScans       PentestScan[]
+  pentestFindings    PentestFinding[]
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
 
@@ -88,6 +94,7 @@ model ProjectEnvironment {
   apiExecutions ApiExecution[]
   variables     EnvironmentVariable[]
   testCycles    TestCycle[]
+  pentestScans  PentestScan[]
 
   @@unique([projectId, name])
 }
@@ -233,6 +240,8 @@ model Defect {
   // Phase D: Link defect created from a test execution
   testExecutionId String?
   testExecution   TestExecution? @relation(fields: [testExecutionId], references: [id], onDelete: SetNull)
+
+  pentestFinding  PentestFinding?
 
   // Restrict (spec): a reporter with defects cannot be deleted. Consequence (ISSUE-LOG DEF-02):
   // deleting an ORGANIZATION also fails while it has defects, because Postgres checks this
@@ -512,4 +521,172 @@ model QualityGateConfig {
   maxActiveHighDefects        Int      @default(2)
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
+}
+
+// ---------- Module 14: Authorized Web Pentest & DAST Engine ----------
+
+enum VerificationMethod {
+  DNS_TXT
+  WELL_KNOWN
+}
+
+enum DomainVerificationStatus {
+  PENDING
+  VERIFIED
+  EXPIRED
+}
+
+enum PentestProfile {
+  BASELINE_PASSIVE
+  FULL_ACTIVE
+  API_OPENAPI
+}
+
+enum PentestScanStatus {
+  QUEUED
+  CRAWLING
+  SCANNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum PentestSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum PentestConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum FindingStatus {
+  OPEN
+  FALSE_POSITIVE
+  ACCEPTED_RISK
+  FIXED
+}
+
+enum WstgSource {
+  AUTOMATED
+  MANUAL_REQUIRED
+}
+
+enum WstgStatus {
+  NOT_TESTED
+  PASS
+  FAIL
+  N_A
+}
+
+model VerifiedDomain {
+  id                String                   @id @default(uuid())
+  hostname          String                   // normalized lowercase, no trailing dot
+  verificationToken String
+  method            VerificationMethod
+  status            DomainVerificationStatus @default(PENDING)
+  verifiedAt        DateTime?
+  expiresAt         DateTime?
+  createdAt         DateTime                 @default(now())
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  scans PentestScan[]
+
+  @@unique([projectId, hostname])
+  @@index([projectId, status])
+  @@index([expiresAt])
+}
+
+model PentestScan {
+  id             String            @id @default(uuid())
+  profile        PentestProfile
+  status         PentestScanStatus @default(QUEUED)
+  failureReason  String?
+  openApiSpecUrl String?
+  authConfig     String?           // Encrypted at rest (AES-256-GCM)
+  startedAt      DateTime?
+  completedAt    DateTime?
+  summaryJson    Json?
+  reportPath     String?
+  createdAt      DateTime          @default(now())
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  verifiedDomainId String
+  verifiedDomain   VerifiedDomain @relation(fields: [verifiedDomainId], references: [id], onDelete: Cascade)
+
+  environmentId String?
+  environment   ProjectEnvironment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+
+  requestedById String
+  requestedBy   User @relation(fields: [requestedById], references: [id], onDelete: Cascade)
+
+  findings      PentestFinding[]
+  wstgChecklist WstgChecklistItem[]
+
+  @@index([projectId, status])
+  @@index([verifiedDomainId])
+  @@index([requestedById])
+}
+
+model PentestFinding {
+  id          String            @id @default(uuid())
+  title       String
+  severity    PentestSeverity
+  confidence  PentestConfidence
+  cweId       String?
+  wstgId      String?
+  affectedUrl String
+  httpMethod  String
+  parameter   String?
+  evidence    String?
+  rawRequest  String?
+  rawResponse String?
+  remediation String
+  status      FindingStatus     @default(OPEN)
+  fingerprint String            // Deduplication across reruns
+
+  scanId String
+  scan   PentestScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  linkedDefectId String? @unique
+  linkedDefect   Defect? @relation(fields: [linkedDefectId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([scanId, severity])
+  @@index([projectId, status])
+  @@index([fingerprint])
+}
+
+model WstgChecklistItem {
+  id        String     @id @default(uuid())
+  wstgId    String     // e.g. WSTG-ATHN-01
+  category  String     // WSTG sections 4.1–4.12
+  title     String
+  source    WstgSource @default(MANUAL_REQUIRED)
+  status    WstgStatus @default(NOT_TESTED)
+  notes     String?
+  updatedAt DateTime?  @updatedAt
+
+  scanId String
+  scan   PentestScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  updatedById String?
+  updatedBy   User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([scanId, wstgId])
+  @@index([scanId, category])
 }
