@@ -97,8 +97,8 @@ const allowedTargets = new Set(
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
 );
-if (allowedTargets.size > 0 && process.env.NODE_ENV === 'production') {
-  console.error('[ssrf-guard] SSRF_ALLOWED_TARGETS is ignored in production');
+if (allowedTargets.size > 0 && process.env.NODE_ENV !== 'test') {
+  console.error('[ssrf-guard] SSRF_ALLOWED_TARGETS is only permitted when NODE_ENV === "test"');
   allowedTargets.clear();
 }
 

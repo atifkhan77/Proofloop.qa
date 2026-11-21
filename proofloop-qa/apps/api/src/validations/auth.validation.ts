@@ -8,9 +8,9 @@ export const registerSchema = z.object({
     .string()
     .min(8, 'Password must be at least 8 characters')
     .max(72, 'Password must be at most 72 characters'), // bcrypt input limit
-  firstName: z.string().trim().min(1, 'First name is required'),
-  lastName: z.string().trim().min(1, 'Last name is required'),
-  organizationName: z.string().trim().min(1, 'Organization name is required'),
+  firstName: z.string().trim().min(1, 'First name is required').max(50),
+  lastName: z.string().trim().min(1, 'Last name is required').max(50),
+  organizationName: z.string().trim().min(1, 'Organization name is required').max(100),
 });
 
 export const loginSchema = z.object({

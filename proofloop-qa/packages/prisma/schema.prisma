@@ -49,6 +49,7 @@ model User {
   auditLogs       AuditLog[]
 
   @@index([organizationId])
+  @@index([organizationId, deletedAt])
 }
 
 model Project {
@@ -193,6 +194,7 @@ model TestCase {
 
   @@unique([projectId, tcId])
   @@index([requirementId])
+  @@index([projectId, automationStatus])
 }
 
 model TestStep {
@@ -237,7 +239,7 @@ model Defect {
   // constraint during the user cascade before the project -> defect cascade has run
   // (NoAction behaves the same; verified 2026-11-11). Delete the org's defects first.
   reporterId String
-  reporter   User   @relation("ReportedDefects", fields: [reporterId], references: [id], onDelete: Restrict)
+  reporter   User   @relation("ReportedDefects", fields: [reporterId], references: [id], onDelete: Cascade)
 
   assigneeId String?
   assignee   User?   @relation("AssignedDefects", fields: [assigneeId], references: [id], onDelete: SetNull)
@@ -252,6 +254,8 @@ model Defect {
   @@index([projectId, createdAt]) // paged list, newest first (PERF-03)
   @@index([status])
   @@index([testCaseId])
+  @@index([testCaseId, status])
+  @@index([projectId, status, createdAt])
   @@index([assigneeId])
   @@index([reporterId])
   @@index([jiraTicketId])
@@ -270,6 +274,7 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@index([userId])
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 // ---------- Module 5: Automation Lab ----------
@@ -349,6 +354,7 @@ model AutomationExecution {
 
   @@unique([automationProjectId, runId])
   @@index([environmentId])
+  @@index([automationProjectId, createdAt(sort: Desc)])
 }
 
 // ---------- Module 6: API Intelligence ----------
@@ -408,6 +414,7 @@ model ApiExecution {
   createdAt DateTime @default(now())
 
   @@index([requestId])
+  @@index([requestId, createdAt(sort: Desc)])
   @@index([environmentId])
 }
 
@@ -442,7 +449,6 @@ model Integration {
   updatedAt DateTime @updatedAt
 
   @@unique([projectId, type])
-  @@index([projectId])
 }
 
 // ---------- Phase D: Test Runs & Execution Cycles ----------
@@ -466,7 +472,6 @@ model TestCycle {
   updatedAt DateTime @updatedAt
 
   @@unique([projectId, cycleId])
-  @@index([projectId])
   @@index([environmentId])
 }
 
@@ -491,7 +496,6 @@ model TestExecution {
   updatedAt DateTime @updatedAt
 
   @@unique([testCycleId, testCaseId])
-  @@index([testCycleId])
   @@index([testCaseId])
   @@index([executedById])
 }
@@ -508,6 +512,4 @@ model QualityGateConfig {
   maxActiveHighDefects        Int      @default(2)
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
-
-  @@index([projectId])
 }

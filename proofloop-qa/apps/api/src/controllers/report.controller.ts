@@ -16,6 +16,9 @@ export const getProjectReports = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
+    const windowDays = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+    const timelineSince = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+
     // All queries depend only on the project: run them in parallel (performance review 2026-11-12;
     // was 9 sequential round trips).
     const [requirements, modules, defects, [manualExecutions, autoExecutions, apiExecutions], totalTestCases, automatedTestCases, activeTestCycles] = await Promise.all([
@@ -59,23 +62,26 @@ export const getProjectReports = async (req: AuthRequest, res: Response): Promis
         testCase: { select: { requirement: { select: { moduleId: true } } } },
       },
     }),
-    // 3. Test Execution Pass Rates (grouped by date/week)
+    // 3. Test Execution Pass Rates (grouped by date/week, bounded by timelineSince and take limits)
     Promise.all([
       prisma.testExecution.findMany({
         where: {
           testCycle: { projectId: project.id },
           status: { in: ['PASSED', 'FAILED', 'SKIPPED'] },
+          createdAt: { gte: timelineSince },
         },
         select: {
           status: true,
           executedAt: true,
           createdAt: true,
         },
+        take: 5000,
       }),
       prisma.automationExecution.findMany({
         where: {
           automationProject: { projectId: project.id },
           status: { in: ['PASSED', 'FAILED'] },
+          createdAt: { gte: timelineSince },
         },
         select: {
           status: true,
@@ -84,15 +90,18 @@ export const getProjectReports = async (req: AuthRequest, res: Response): Promis
           skippedCount: true,
           createdAt: true,
         },
+        take: 5000,
       }),
       prisma.apiExecution.findMany({
         where: {
           request: { collection: { projectId: project.id } },
+          createdAt: { gte: timelineSince },
         },
         select: {
           status: true,
           createdAt: true,
         },
+        take: 5000,
       }),
     ]),
     prisma.testCase.count({ where: { projectId: project.id } }),
